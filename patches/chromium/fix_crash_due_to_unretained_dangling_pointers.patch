@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Amit Parida <amitpari@amazon.com>
+Date: Thu, 20 Jun 2024 04:44:20 +0530
+Subject: fix: crash due to unretained dangling pointers
+
+If there is any asynchrony in the onBeforeRequest handler, attempting to navigate to or within few websites like Adidas-CA or Yahoo, it results in Chromium crashing the application with the fatal error: [67617:0614/200604.586896:FATAL:partition_alloc_support.cc(807)] Detected dangling raw_ptr in unretained with id=0x00000138007c37fc:.
+Try-catch blocks are not sufficient to keep this error from tearing down the entire application.
+
+diff --git a/base/allocator/partition_alloc_support.cc b/base/allocator/partition_alloc_support.cc
+index 179a452b362f7516a7bb60c30fe4f06d43dc06a5..31db4cb57ce6727c59ebdfccd6a17689c72a1b42 100644
+--- a/base/allocator/partition_alloc_support.cc
++++ b/base/allocator/partition_alloc_support.cc
+@@ -652,60 +652,60 @@ bool operator==(const debug::TaskTrace& lhs, const debug::TaskTrace& rhs) {
+ template <features::DanglingPtrMode dangling_pointer_mode,
+           features::DanglingPtrType dangling_pointer_type>
+ void DanglingRawPtrReleased(uintptr_t id) {
+-  // This is called from raw_ptr<>'s release operation. Making allocations is
+-  // allowed. In particular, symbolizing and printing the StackTraces may
+-  // allocate memory.
+-
+-  debug::StackTrace stack_trace_release(kDanglingPtrStackTraceSize);
+-  debug::TaskTrace task_trace_release;
+-  std::optional<DanglingPointerFreeInfo> free_info =
+-      TakeDanglingPointerFreeInfo(id);
+-
+-  if constexpr (dangling_pointer_type ==
+-                features::DanglingPtrType::kCrossTask) {
+-    if (!free_info) {
+-      return;
+-    }
+-    if (task_trace_release == free_info->task_trace) {
+-      return;
+-    }
+-  }
+-
+-  std::string dangling_signature = ExtractDanglingPtrSignature(
+-      free_info, stack_trace_release, task_trace_release);
+-  static const char dangling_ptr_footer[] =
+-      "\n"
+-      "\n"
+-      "Please check for more information on:\n"
+-      "https://chromium.googlesource.com/chromium/src/+/main/docs/"
+-      "dangling_ptr_guide.md\n"
+-      "\n"
+-      "Googlers: Please give us your feedback about the dangling pointer\n"
+-      "          detector at:\n"
+-      "          http://go/dangling-ptr-cq-survey\n";
+-  if (free_info) {
+-    LOG(ERROR) << "Detected dangling raw_ptr with id="
+-               << StringPrintf("0x%016" PRIxPTR, id) << ":\n"
+-               << dangling_signature << "\n\n"
+-               << "The memory was freed at:\n"
+-               << free_info->stack_trace << "\n"
+-               << free_info->task_trace << "\n"
+-               << "The dangling raw_ptr was released at:\n"
+-               << stack_trace_release << "\n"
+-               << task_trace_release << dangling_ptr_footer;
+-  } else {
+-    LOG(ERROR) << "Detected dangling raw_ptr with id="
+-               << StringPrintf("0x%016" PRIxPTR, id) << ":\n\n"
+-               << dangling_signature << "\n\n"
+-               << "It was not recorded where the memory was freed.\n\n"
+-               << "The dangling raw_ptr was released at:\n"
+-               << stack_trace_release << "\n"
+-               << task_trace_release << dangling_ptr_footer;
+-  }
+-
+-  if constexpr (dangling_pointer_mode == features::DanglingPtrMode::kCrash) {
+-    ImmediateCrash();
+-  }
++//   // This is called from raw_ptr<>'s release operation. Making allocations is
++//   // allowed. In particular, symbolizing and printing the StackTraces may
++//   // allocate memory.
++
++//   debug::StackTrace stack_trace_release(kDanglingPtrStackTraceSize);
++//   debug::TaskTrace task_trace_release;
++//   std::optional<DanglingPointerFreeInfo> free_info =
++//       TakeDanglingPointerFreeInfo(id);
++
++//   if constexpr (dangling_pointer_type ==
++//                 features::DanglingPtrType::kCrossTask) {
++//     if (!free_info) {
++//       return;
++//     }
++//     if (task_trace_release == free_info->task_trace) {
++//       return;
++//     }
++//   }
++
++//   std::string dangling_signature = ExtractDanglingPtrSignature(
++//       free_info, stack_trace_release, task_trace_release);
++//   static const char dangling_ptr_footer[] =
++//       "\n"
++//       "\n"
++//       "Please check for more information on:\n"
++//       "https://chromium.googlesource.com/chromium/src/+/main/docs/"
++//       "dangling_ptr_guide.md\n"
++//       "\n"
++//       "Googlers: Please give us your feedback about the dangling pointer\n"
++//       "          detector at:\n"
++//       "          http://go/dangling-ptr-cq-survey\n";
++//   if (free_info) {
++//     LOG(ERROR) << "Detected dangling raw_ptr with id="
++//                << StringPrintf("0x%016" PRIxPTR, id) << ":\n"
++//                << dangling_signature << "\n\n"
++//                << "The memory was freed at:\n"
++//                << free_info->stack_trace << "\n"
++//                << free_info->task_trace << "\n"
++//                << "The dangling raw_ptr was released at:\n"
++//                << stack_trace_release << "\n"
++//                << task_trace_release << dangling_ptr_footer;
++//   } else {
++//     LOG(ERROR) << "Detected dangling raw_ptr with id="
++//                << StringPrintf("0x%016" PRIxPTR, id) << ":\n\n"
++//                << dangling_signature << "\n\n"
++//                << "It was not recorded where the memory was freed.\n\n"
++//                << "The dangling raw_ptr was released at:\n"
++//                << stack_trace_release << "\n"
++//                << task_trace_release << dangling_ptr_footer;
++//   }
++
++//   if constexpr (dangling_pointer_mode == features::DanglingPtrMode::kCrash) {
++//     ImmediateCrash();
++//   }
+ }
+ 
+ void CheckDanglingRawPtrBufferEmpty() {
